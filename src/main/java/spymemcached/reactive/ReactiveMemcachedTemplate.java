@@ -15,6 +15,7 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
 public class ReactiveMemcachedTemplate implements ReactiveMemcachedOperations {
@@ -276,8 +277,7 @@ public class ReactiveMemcachedTemplate implements ReactiveMemcachedOperations {
     }
 
     private <T> Mono<T> fromOperationFuture(Supplier<OperationFuture<T>> futureCreator) {
-        return Mono.create(sink -> {
-            OperationFuture<T> future = futureCreator.get();
+        return toMono(futureCreator, (sink, future) -> {
             try {
                 future.addListener(ignored -> pipeToSync(future, sink));
             } catch (RuntimeException e) {
@@ -287,8 +287,7 @@ public class ReactiveMemcachedTemplate implements ReactiveMemcachedOperations {
     }
 
     private <T> Mono<T> fromGetFuture(Supplier<GetFuture<T>> futureCreator) {
-        return Mono.create(sink -> {
-            GetFuture<T> future = futureCreator.get();
+        return toMono(futureCreator, (sink, future) -> {
             try {
                 future.addListener(ignored -> pipeToSync(future, sink));
             } catch (RuntimeException e) {
@@ -298,8 +297,7 @@ public class ReactiveMemcachedTemplate implements ReactiveMemcachedOperations {
     }
 
     private <T> Mono<T> fromBulkFuture(Supplier<BulkFuture<T>> futureCreator) {
-        return Mono.create(sink -> {
-            BulkFuture<T> future = futureCreator.get();
+        return toMono(futureCreator, (sink, future) -> {
             try {
                 future.addListener(ignored -> pipeToSync(future, sink));
             } catch (RuntimeException e) {
@@ -308,9 +306,21 @@ public class ReactiveMemcachedTemplate implements ReactiveMemcachedOperations {
         });
     }
 
+    private <T, F extends Future<T>> Mono<T> toMono(Supplier<F> futureCreator, BiConsumer<MonoSink<T>, F> callback) {
+        return Mono.create(sink -> {
+            F future = futureCreator.get();
+            sink = sink.onCancel(() -> future.cancel(true));
+            callback.accept(sink, future);
+        });
+    }
+
     private <T> void pipeToSync(Future<T> future, MonoSink<T> sink) {
         assert future.isDone();
+        if (future.isCancelled()) {
+            return;
+        }
         try {
+            System.out.println("pipeToSync");
             sink.success(future.get());
         } catch (ExecutionException | InterruptedException e) {
             sink.error(e.getCause() == null ? e : e.getCause());
