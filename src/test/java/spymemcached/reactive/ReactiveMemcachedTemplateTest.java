@@ -24,6 +24,7 @@ import org.mockito.invocation.Invocation;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.Arrays;
@@ -41,6 +42,7 @@ import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -57,24 +59,17 @@ public class ReactiveMemcachedTemplateTest {
 
     @TestTemplate
     @ExtendWith(TestTemplateInvocationContextProviderImpl.class)
-    void verifyCorrectMethodInvoked(Method method) throws Exception {
+    void lazilyInvokesCorrespondingMethod(Method method) throws Exception {
         Object[] args = stubValuesForMethod(method);
 
         Mono<?> result = (Mono<?>) method.invoke(template, args);
+        verifyZeroInteractions(memcachedClient);
+
         AtomicReference<Object> reference = new AtomicReference<>();
         result.subscribe(reference::set);
+        Future stub = verifyCorrespondingMethodInvoked(method, args);
 
-        Collection<Invocation> invocations = Mockito.mockingDetails(memcachedClient).getInvocations();
-        assertThat(invocations, hasSize(1));
-        Invocation invocation = invocations.iterator().next();
-        assertThat(invocation.getMethod().getName(), matchesCorrespondingMethodName(method.getName()));
-        assertThat(invocation.getRawArguments(), equalTo(args));
-
-        // Invoke the method again to retrieve the backing stub
-        Future stub = (Future) invocation.getMethod().invoke(memcachedClient, invocation.getRawArguments());
-
-        GenericCompletionListener listener;
-        listener = verifyListenerAdded(stub);
+        GenericCompletionListener listener = verifyListenerAdded(stub);
 
         String item = UUID.randomUUID().toString();
         when(stub.get()).thenReturn(item);
@@ -104,6 +99,17 @@ public class ReactiveMemcachedTemplateTest {
         } else {
             return Mockito.mock(type);
         }
+    }
+
+    private Future verifyCorrespondingMethodInvoked(Method method, Object[] args) throws IllegalAccessException, InvocationTargetException {
+        Collection<Invocation> invocations = Mockito.mockingDetails(memcachedClient).getInvocations();
+        assertThat(invocations, hasSize(1));
+        Invocation invocation = invocations.iterator().next();
+        assertThat(invocation.getMethod().getName(), matchesCorrespondingMethodName(method.getName()));
+        assertThat(invocation.getRawArguments(), equalTo(args));
+
+        // Invoke the method again to retrieve the backing stub
+        return (Future) invocation.getMethod().invoke(memcachedClient, invocation.getRawArguments());
     }
 
     private Matcher<String> matchesCorrespondingMethodName(String methodName) {
