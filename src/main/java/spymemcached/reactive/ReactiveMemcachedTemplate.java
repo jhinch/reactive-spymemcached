@@ -320,7 +320,6 @@ public class ReactiveMemcachedTemplate implements ReactiveMemcachedOperations {
             return;
         }
         try {
-            System.out.println("pipeToSync");
             sink.success(future.get());
         } catch (ExecutionException | InterruptedException e) {
             sink.error(e.getCause() == null ? e : e.getCause());
